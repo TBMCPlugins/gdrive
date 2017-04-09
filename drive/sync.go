@@ -168,7 +168,7 @@ func (self *Drive) prepareRemoteFiles(rootDir *drive.File, sortOrder string) ([]
 		return nil, err
 	}
 
-	relPaths, err := prepareRemoteRelPaths(rootDir, files)
+	relPaths, err, files := prepareRemoteRelPaths(rootDir, files)
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +188,7 @@ func (self *Drive) prepareRemoteFiles(rootDir *drive.File, sortOrder string) ([]
 	return remoteFiles, nil
 }
 
-func prepareRemoteRelPaths(root *drive.File, files []*drive.File) (map[string]string, error) {
+func prepareRemoteRelPaths(root *drive.File, files []*drive.File) (map[string]string, error, []*drive.File) {
 	// The tree only holds integer values so we use
 	// maps to lookup file by index and index by file id
 	indexLookup := map[string]graph.NI{}
@@ -196,6 +196,7 @@ func prepareRemoteRelPaths(root *drive.File, files []*drive.File) (map[string]st
 
 	// All files includes root dir
 	allFiles := append([]*drive.File{root}, files...)
+	finalFiles := make([]*drive.File, 0)
 
 	// Prepare lookup maps
 	for i, f := range allFiles {
@@ -206,20 +207,28 @@ func prepareRemoteRelPaths(root *drive.File, files []*drive.File) (map[string]st
 	// This will hold 'parent index' -> 'file index' relationships
 	pathEnds := make([]graph.PathEnd, len(allFiles))
 
+	x := 0
 	// Prepare parent -> file relationships
-	for i, f := range allFiles {
+	for _, f := range allFiles {
 		if f == root {
-			pathEnds[i] = graph.PathEnd{From: -1}
+			pathEnds[x] = graph.PathEnd{From: -1}
+			x++
 			continue
 		}
 
 		// Lookup index of parent
 		parentIdx, found := indexLookup[f.Parents[0]]
-		if !found {
-			return nil, fmt.Errorf("Could not find parent of %s (%s)", f.Id, f.Name)
+		//if !found {
+			//return nil, fmt.Errorf("Could not find parent of %s (%s)", f.Id, f.Name)
+		//}
+		if found {
+			pathEnds[x] = graph.PathEnd{From: parentIdx}
+			finalFiles = append(finalFiles, f)
+			x++
 		}
-		pathEnds[i] = graph.PathEnd{From: parentIdx}
 	}
+
+	allFiles = finalFiles;
 
 	// Create parent pointer tree and calculate path lengths
 	tree := &graph.FromList{Paths: pathEnds}
@@ -228,6 +237,12 @@ func prepareRemoteRelPaths(root *drive.File, files []*drive.File) (map[string]st
 
 	// This will hold a map of file id => relative path
 	paths := map[string]string{}
+
+	// Prepare lookup maps
+	for i, f := range allFiles {
+		indexLookup[f.Id] = graph.NI(i)
+		fileLookup[graph.NI(i)] = f
+	}
 
 	// Find relative path from root for all files
 	for _, f := range allFiles {
@@ -255,7 +270,7 @@ func prepareRemoteRelPaths(root *drive.File, files []*drive.File) (map[string]st
 		paths[f.Id] = filepath.Join(pathNames...)
 	}
 
-	return paths, nil
+	return paths, nil, allFiles
 }
 
 func checkFiles(files []*drive.File) error {
