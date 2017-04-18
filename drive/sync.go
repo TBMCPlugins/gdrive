@@ -168,7 +168,7 @@ func (self *Drive) prepareRemoteFiles(rootDir *drive.File, sortOrder string) ([]
 		return nil, err
 	}
 
-	relPaths, err := prepareRemoteRelPaths(rootDir, files)
+	relPaths, err := self.prepareRemoteRelPaths(rootDir, files)
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +188,7 @@ func (self *Drive) prepareRemoteFiles(rootDir *drive.File, sortOrder string) ([]
 	return remoteFiles, nil
 }
 
-func prepareRemoteRelPaths(root *drive.File, files []*drive.File) (map[string]string, error) {
+func (self *Drive) prepareRemoteRelPaths(root *drive.File, files []*drive.File) (map[string]string, error) {
 	// The tree only holds integer values so we use
 	// maps to lookup file by index and index by file id
 	indexLookup := map[string]graph.NI{}
@@ -216,7 +216,12 @@ func prepareRemoteRelPaths(root *drive.File, files []*drive.File) (map[string]st
 		// Lookup index of parent
 		parentIdx, found := indexLookup[f.Parents[0]]
 		if !found {
-			return nil, fmt.Errorf("Could not find parent of %s (%s)", f.Id, f.Name)
+			_, err := self.removeFromSync(f, 0)
+			if err != nil {
+				fmt.Printf("Could not find parent of %s (%s), remove from sync failed: %s\n", f.Id, f.Name, err)
+			} else {
+				fmt.Printf("Could not find parent of %s (%s), removed from sync\n", f.Id, f.Name)
+			}
 		}
 		pathEnds[i] = graph.PathEnd{From: parentIdx}
 	}
@@ -256,6 +261,25 @@ func prepareRemoteRelPaths(root *drive.File, files []*drive.File) (map[string]st
 	}
 
 	return paths, nil
+}
+
+func (self *Drive) removeFromSync(file *drive.File, try int) (*drive.File, error) {
+	dstFile := &drive.File{
+		AppProperties: map[string]string{"sync": "false"},
+	}
+	
+	f, err := self.service.Files.Update(file.Id, dstFile).Do()
+	if err != nil {
+		if isBackendOrRateLimitError(err) && try < MaxErrorRetries {
+			exponentialBackoffSleep(try)
+			try++
+			return self.removeFromSync(dstFile, try)
+		} else {
+			return nil, fmt.Errorf("Failed to remove directory from sync: %s", err)
+		}
+	}
+
+	return f, nil
 }
 
 func checkFiles(files []*drive.File) error {
