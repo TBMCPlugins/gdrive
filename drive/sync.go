@@ -155,7 +155,7 @@ func prepareLocalFiles(root string) ([]*LocalFile, error) {
 func (self *Drive) prepareRemoteFiles(rootDir *drive.File, sortOrder string) ([]*RemoteFile, error) {
 	// Find all files which has rootDir as root
 	listArgs := listAllFilesArgs{
-		query:     fmt.Sprintf("appProperties has {key='syncRootId' and value='%s'}", rootDir.Id),
+		query:     fmt.Sprintf("appProperties has {key='syncRootId' and value='%s'} and appProperties has {key='sync' and value='true'}", rootDir.Id),
 		fields:    []googleapi.Field{"nextPageToken", "files(id,name,parents,md5Checksum,mimeType,size,modifiedTime)"},
 		sortOrder: sortOrder,
 	}
@@ -177,12 +177,14 @@ func (self *Drive) prepareRemoteFiles(rootDir *drive.File, sortOrder string) ([]
 	for _, f := range files {
 		relPath, ok := relPaths[f.Id]
 		if !ok {
-			return nil, fmt.Errorf("File %s does not have a valid parent", f.Id)
+			//return nil, fmt.Errorf("File %s does not have a valid parent", f.Id)
+			fmt.Printf("File %s does not have a valid parent", f.Id)
+		} else {
+			remoteFiles = append(remoteFiles, &RemoteFile{
+				relPath: relPath,
+				file:    f,
+			})
 		}
-		remoteFiles = append(remoteFiles, &RemoteFile{
-			relPath: relPath,
-			file:    f,
-		})
 	}
 
 	return remoteFiles, nil
@@ -222,8 +224,11 @@ func (self *Drive) prepareRemoteRelPaths(root *drive.File, files []*drive.File) 
 			} else {
 				fmt.Printf("Could not find parent of %s (%s), removed from sync\n", f.Id, f.Name)
 			}
+			fileLookup[indexLookup[f.Id]] = nil
+			indexLookup[f.Id] = graph.NI(-1)
+		} else {
+			pathEnds[i] = graph.PathEnd{From: parentIdx}
 		}
-		pathEnds[i] = graph.PathEnd{From: parentIdx}
 	}
 
 	// Create parent pointer tree and calculate path lengths
@@ -236,7 +241,7 @@ func (self *Drive) prepareRemoteRelPaths(root *drive.File, files []*drive.File) 
 
 	// Find relative path from root for all files
 	for _, f := range allFiles {
-		if f == root {
+		if f == root || indexLookup[f.Id] == -1 {
 			continue
 		}
 
@@ -250,7 +255,7 @@ func (self *Drive) prepareRemoteRelPaths(root *drive.File, files []*drive.File) 
 		// Lookup file for each node and grab name
 		for _, n := range nodes {
 			file := fileLookup[n]
-			if file == root {
+			if file == root || file == nil {
 				continue
 			}
 			pathNames = append(pathNames, file.Name)
@@ -267,7 +272,7 @@ func (self *Drive) removeFromSync(file *drive.File, try int) (*drive.File, error
 	dstFile := &drive.File{
 		AppProperties: map[string]string{"sync": "false"},
 	}
-	
+
 	f, err := self.service.Files.Update(file.Id, dstFile).Do()
 	if err != nil {
 		if isBackendOrRateLimitError(err) && try < MaxErrorRetries {
